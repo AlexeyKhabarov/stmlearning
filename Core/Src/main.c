@@ -26,6 +26,13 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum
+{
+  LED_MODE_OFF = 0,
+  LED_MODE_ON,
+  LED_MODE_BLINK_SLOW,
+  LED_MODE_BLINK_FAST,
+} LedMode_t;
 
 /* USER CODE END PTD */
 
@@ -49,6 +56,8 @@ volatile uint32_t press_count = 0;
 static uint8_t blink_active = 0;
 static uint8_t blink_toggles_left = 0;
 static uint32_t blink_tick = 0;
+static LedMode_t led_mode = LED_MODE_OFF;
+static uint32_t led_mode_tick = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,38 +124,41 @@ int main(void)
     /* USER CODE BEGIN 3 */
     uint32_t now = HAL_GetTick();
 
-    /* Обработка кнопочных событий */
     if (pending_presses > 0U)
     {
       pending_presses--;
-
-      if ((press_count != 0U) && ((press_count % 5U) == 0U))
+      led_mode++;
+      if (led_mode > LED_MODE_BLINK_FAST)
       {
-        blink_active = 1U;
-        blink_toggles_left = 6U;
-        blink_tick = now;
+        led_mode = LED_MODE_OFF;
       }
+      led_mode_tick = now;
     }
-
-    /* Специальное тройное мигание на каждое 5-е нажатие */
-    if (blink_active && ((now - blink_tick) >= 100U))
+    switch (led_mode)
     {
-      blink_tick = now;
-      HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
-      blink_toggles_left--;
-
-      if (blink_toggles_left == 0U)
+    case LED_MODE_OFF:
+      led_set_off();
+      break;
+    case LED_MODE_ON:
+      led_set_on();
+      break;
+    case LED_MODE_BLINK_SLOW:
+      if ((now - led_mode_tick) >= 500U)
       {
-        blink_active = 0U;
-        led_set_off();
+        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+        led_mode_tick = now;
       }
-    }
-
-    /* Обычное мигание работает только когда нет спец-мигания */
-    if (!blink_active && ((now - last_blink) >= 500U))
-    {
-      last_blink = now;
-      HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+      break;
+    case LED_MODE_BLINK_FAST:
+      if ((now - led_mode_tick) >= 150U)
+      {
+        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+        led_mode_tick = now;
+      }
+      break;
+    default:
+      led_mode = LED_MODE_OFF;
+      break;
     }
     /* USER CODE END 3 */
   }
@@ -182,8 +194,7 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
