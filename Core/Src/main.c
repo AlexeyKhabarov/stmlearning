@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include <string.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -59,7 +59,14 @@ static uint8_t blink_toggles_left = 0;
 static uint32_t blink_tick = 0;
 static LedMode_t led_mode = LED_MODE_OFF;
 static uint32_t led_mode_tick = 0;
-uint8_t rx_byte;
+static uint8_t rx_byte;
+static uint8_t rx_buffer[64];
+static uint8_t rx_index = 0;
+static uint8_t command_ready;
+static const char led_on[] = "LED ON\r\n";
+static const char led_off[] = "LED OFF\r\n";
+static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
+static const char led_blink_fast[] = "LED BLINK FAST\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -83,6 +90,38 @@ static void led_set_off(void)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 }
 
+void execute_command(const char *str)
+{
+  if (strcmp(str, "led on") == 0)
+  {
+    led_mode = LED_MODE_ON;
+  }
+  else if (strcmp(str, "led off") == 0)
+  {
+    led_mode = LED_MODE_OFF;
+  }
+  else if (strcmp(str, "status") == 0)
+  {
+    switch (led_mode)
+    {
+    case LED_MODE_OFF:
+      HAL_UART_Transmit(&huart6, (uint8_t *)led_off, sizeof(led_off) - 1, HAL_MAX_DELAY);
+      break;
+    case LED_MODE_ON:
+      HAL_UART_Transmit(&huart6, (uint8_t *)led_on, sizeof(led_on) - 1, HAL_MAX_DELAY);
+      break;
+    case LED_MODE_BLINK_SLOW:
+      HAL_UART_Transmit(&huart6, (uint8_t *)led_blink_slow, sizeof(led_blink_slow) - 1, HAL_MAX_DELAY);
+      break;
+    case LED_MODE_BLINK_FAST:
+      HAL_UART_Transmit(&huart6, (uint8_t *)led_blink_fast, sizeof(led_blink_fast) - 1, HAL_MAX_DELAY);
+      break;
+    default:
+      HAL_UART_Transmit(&huart6, (uint8_t *)led_off, sizeof(led_off) - 1, HAL_MAX_DELAY);
+      break;
+    }
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -117,7 +156,7 @@ int main(void)
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
   led_set_off();
-  const char msg[] = "Hello UART6\r\n";
+  const char msg[] = "UART6 is ready\r\n";
   HAL_UART_Transmit(&huart6, (uint8_t *)msg, sizeof(msg) - 1, HAL_MAX_DELAY);
   /* USER CODE END 2 */
 
@@ -129,7 +168,33 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     HAL_UART_Receive(&huart6, &rx_byte, 1, HAL_MAX_DELAY);
-    HAL_UART_Transmit(&huart6, &rx_byte, 1, HAL_MAX_DELAY);
+    if (rx_index < sizeof(rx_buffer) - 1)
+    {
+
+      if (rx_byte != '\r' && rx_byte != '\n')
+      {
+        rx_buffer[rx_index++] = rx_byte;
+        rx_buffer[rx_index] = '\0';
+      }
+      else
+      {
+        command_ready = 1;
+        rx_buffer[rx_index] = '\0';
+      }
+    }
+    else
+    {
+      rx_index = 0;
+      memset(rx_buffer, 0, sizeof(rx_buffer));
+    }
+
+    if (command_ready)
+    {
+      execute_command((char *)rx_buffer);
+      command_ready = 0;
+      rx_index = 0;
+      memset(rx_buffer, 0, sizeof(rx_buffer));
+    }
     uint32_t now = HAL_GetTick();
 
     if (pending_presses > 0U)
