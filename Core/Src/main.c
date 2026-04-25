@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <string.h>
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -59,10 +59,10 @@ static uint8_t blink_toggles_left = 0;
 static uint32_t blink_tick = 0;
 static LedMode_t led_mode = LED_MODE_OFF;
 static uint32_t led_mode_tick = 0;
-static uint8_t rx_byte;
-static uint8_t rx_buffer[64];
-static uint8_t rx_index = 0;
-static uint8_t command_ready;
+volatile uint8_t rx_byte;
+volatile uint8_t rx_buffer[64];
+volatile uint8_t rx_index = 0;
+volatile uint8_t command_ready;
 static const char led_on[] = "LED ON\r\n";
 static const char led_off[] = "LED OFF\r\n";
 static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
@@ -158,6 +158,7 @@ int main(void)
   led_set_off();
   const char msg[] = "UART6 is ready\r\n";
   HAL_UART_Transmit(&huart6, (uint8_t *)msg, sizeof(msg) - 1, HAL_MAX_DELAY);
+  HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -167,26 +168,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_UART_Receive(&huart6, &rx_byte, 1, HAL_MAX_DELAY);
-    if (rx_index < sizeof(rx_buffer) - 1)
-    {
-
-      if (rx_byte != '\r' && rx_byte != '\n')
-      {
-        rx_buffer[rx_index++] = rx_byte;
-        rx_buffer[rx_index] = '\0';
-      }
-      else
-      {
-        command_ready = 1;
-        rx_buffer[rx_index] = '\0';
-      }
-    }
-    else
-    {
-      rx_index = 0;
-      memset(rx_buffer, 0, sizeof(rx_buffer));
-    }
 
     if (command_ready)
     {
@@ -195,6 +176,7 @@ int main(void)
       rx_index = 0;
       memset(rx_buffer, 0, sizeof(rx_buffer));
     }
+
     uint32_t now = HAL_GetTick();
 
     if (pending_presses > 0U)
@@ -366,6 +348,32 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     pending_presses++;
     press_count++;
   }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART6)
+  {
+    if (rx_index < sizeof(rx_buffer) - 1)
+    {
+      if (rx_byte != '\r' && rx_byte != '\n')
+      {
+        rx_buffer[rx_index++] = rx_byte;
+        rx_buffer[rx_index] = '\0';
+      }
+      else
+      {
+        command_ready = 1;
+        rx_buffer[rx_index] = '\0';
+      }
+    }
+    else
+    {
+      rx_index = 0;
+      memset(rx_buffer, 0, sizeof(rx_buffer));
+    }
+  }
+  HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
 }
 /* USER CODE END 4 */
 
