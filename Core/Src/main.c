@@ -47,6 +47,8 @@ typedef enum
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
@@ -67,12 +69,14 @@ static const char led_on[] = "LED ON\r\n";
 static const char led_off[] = "LED OFF\r\n";
 static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
 static const char led_blink_fast[] = "LED BLINK FAST\r\n";
+volatile uint8_t tim_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART6_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -154,11 +158,13 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART6_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   led_set_off();
   const char msg[] = "UART6 is ready\r\n";
   HAL_UART_Transmit(&huart6, (uint8_t *)msg, sizeof(msg) - 1, HAL_MAX_DELAY);
   HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
+  HAL_TIM_Base_Start_IT(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -168,6 +174,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    if (tim_flag)
+    {
+      led_mode = (led_mode == LED_MODE_OFF) ? LED_MODE_ON : LED_MODE_OFF;
+      tim_flag = 0;
+    }
 
     if (command_ready)
     {
@@ -215,8 +226,8 @@ int main(void)
       led_mode = LED_MODE_OFF;
       break;
     }
-    /* USER CODE END 3 */
   }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -261,6 +272,50 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+ * @brief TIM2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 839;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 9999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
 }
 
 /**
@@ -374,6 +429,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
   }
   HAL_UART_Receive_IT(&huart6, &rx_byte, 1);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM2)
+  {
+    tim_flag = 1;
+  }
 }
 /* USER CODE END 4 */
 
