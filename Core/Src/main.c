@@ -47,6 +47,8 @@ typedef enum
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart6;
@@ -70,6 +72,10 @@ static const char led_off[] = "LED OFF\r\n";
 static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
 static const char led_blink_fast[] = "LED BLINK FAST\r\n";
 volatile uint8_t tim_flag = 0;
+static int32_t measured_adc1_ch10_code = 0;
+static int16_t time_between_measurements = 0;
+static int8_t continue_measuring = 0;
+static uint32_t prev_measurement = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,6 +83,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART6_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -93,7 +100,25 @@ static void led_set_off(void)
 {
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
 }
-
+void parsing_measurement_command(char *str)
+{
+  char *first, *second;
+  first = strtok(str, " ");
+  second = strtok(NULL, " ");
+  if (second != NULL)
+  {
+    time_between_measurements = atoi(second);
+    if (time_between_measurements == 0)
+    {
+      continue_measuring = 0;
+    }
+    else
+    {
+      continue_measuring = 1;
+      prev_measurement = HAL_GetTick();
+    }
+  }
+}
 void execute_command(const char *str)
 {
   if (strcmp(str, "led on") == 0)
@@ -123,6 +148,29 @@ void execute_command(const char *str)
     default:
       HAL_UART_Transmit(&huart6, (uint8_t *)led_off, sizeof(led_off) - 1, HAL_MAX_DELAY);
       break;
+    }
+  }
+  else if (strncmp(str, "measurement", 11) == 0)
+  {
+    if (strlen(str) == 11)
+    {
+      HAL_ADC_Start(&hadc1);
+      if (HAL_ADC_PollForConversion(&hadc1, 100U) == HAL_OK)
+      {
+        measured_adc1_ch10_code = HAL_ADC_GetValue(&hadc1);
+        char buf[16];
+        int len = sprintf(buf, "ADC: %lu\r\n", measured_adc1_ch10_code);
+        HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+      }
+      else
+      {
+        const char str[] = "ADC timeout";
+        HAL_UART_Transmit(&huart6, (uint8_t *)str, sizeof(str) - 1, HAL_MAX_DELAY);
+      }
+    }
+    else if (str[11] == ' ')
+    {
+      parsing_measurement_command(str);
     }
   }
 }
@@ -159,6 +207,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART6_UART_Init();
   MX_TIM2_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   led_set_off();
   const char msg[] = "UART6 is ready\r\n";
@@ -174,6 +223,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    uint32_t now = HAL_GetTick();
+
     if (tim_flag)
     {
       led_mode = (led_mode == LED_MODE_OFF) ? LED_MODE_ON : LED_MODE_OFF;
@@ -188,7 +239,21 @@ int main(void)
       memset(rx_buffer, 0, sizeof(rx_buffer));
     }
 
-    uint32_t now = HAL_GetTick();
+    if (continue_measuring == 1)
+    {
+      if ((now - prev_measurement) >= time_between_measurements)
+      {
+        HAL_ADC_Start(&hadc1);
+        if (HAL_ADC_PollForConversion(&hadc1, 100U) == HAL_OK)
+        {
+          measured_adc1_ch10_code = HAL_ADC_GetValue(&hadc1);
+          char buf[16];
+          int len = sprintf(buf, "ADC: %lu\r\n", measured_adc1_ch10_code);
+          HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+        }
+        prev_measurement = now;
+      }
+    }
 
     if (pending_presses > 0U)
     {
@@ -272,6 +337,57 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+ * @brief ADC1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+   */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+   */
+  sConfig.Channel = ADC_CHANNEL_10;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
 }
 
 /**
@@ -364,8 +480,8 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
