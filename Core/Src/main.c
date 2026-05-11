@@ -33,7 +33,12 @@ typedef enum
   LED_MODE_BLINK_SLOW,
   LED_MODE_BLINK_FAST,
 } LedMode_t;
-
+typedef enum
+{
+  ADC_JOB_NONE = 0,
+  ADC_JOB_SINGLE,
+  ADC_JOB_AVG,
+} ADCMode_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -73,12 +78,15 @@ static const char led_off[] = "LED OFF\r\n";
 static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
 static const char led_blink_fast[] = "LED BLINK FAST\r\n";
 volatile uint8_t tim_flag = 0;
-volatile int32_t measured_adc1_ch10_code = 0;
 static int16_t time_between_measurements = 0;
 static int8_t continue_measuring = 0;
 static uint32_t prev_measurement = 0;
-static uint32_t adc_dma_value = 0;
+static uint32_t adc_single_value = 0;
+static uint32_t adc_dma_buffer[8];
 volatile uint8_t adc_flag = 0;
+static ADCMode_t adc_mode = ADC_JOB_NONE;
+static const char line_busy[] = "ADC busy\r\n";
+static const char adc_error[] = "ADC error\r\n";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -154,23 +162,34 @@ void execute_command(const char *str)
       break;
     }
   }
+  else if (strcmp(str, "measurement_avg") == 0)
+  {
+    adc_mode = ADC_JOB_AVG;
+    status = HAL_ADC_Start_DMA(&hadc1, adc_dma_buffer, sizeof(adc_dma_buffer) / sizeof(adc_dma_buffer[0]));
+    if (status == HAL_BUSY)
+    {
+      HAL_UART_Transmit(&huart6, (uint8_t *)line_busy, sizeof(line_busy) - 1, HAL_MAX_DELAY);
+    }
+    else if (status == HAL_ERROR)
+    {
+      HAL_UART_Transmit(&huart6, (uint8_t *)adc_error, sizeof(adc_error) - 1, HAL_MAX_DELAY);
+    }
+  }
   else if (strncmp(str, "measurement", 11) == 0)
   {
     if (strlen(str) == 11)
     {
-      status = HAL_ADC_Start_DMA(&hadc1, &adc_dma_value, 1);
+      adc_mode = ADC_JOB_SINGLE;
+      status = HAL_ADC_Start_DMA(&hadc1, &adc_single_value, 1);
       if (status == HAL_BUSY)
       {
-        static const char line_bisy[] = "ADC busy\r\n";
-        HAL_UART_Transmit(&huart6, (uint8_t *)line_bisy, sizeof(line_bisy) - 1, HAL_MAX_DELAY);
+        HAL_UART_Transmit(&huart6, (uint8_t *)line_busy, sizeof(line_busy) - 1, HAL_MAX_DELAY);
       }
       else if (status == HAL_ERROR)
       {
-        static const char adc_error[] = "ADC error\r\n";
         HAL_UART_Transmit(&huart6, (uint8_t *)adc_error, sizeof(adc_error) - 1, HAL_MAX_DELAY);
       }
     }
-
     else if (str[11] == ' ')
     {
       parsing_measurement_command(str);
@@ -247,27 +266,44 @@ int main(void)
     {
       if ((now - prev_measurement) >= time_between_measurements)
       {
-        status = HAL_ADC_Start_DMA(&hadc1, &adc_dma_value, 1);
+        adc_mode = ADC_JOB_SINGLE;
+        status = HAL_ADC_Start_DMA(&hadc1, &adc_single_value, 1);
         if (status == HAL_BUSY)
         {
-          static const char line_bisy[] = "ADC busy\r\n";
-          HAL_UART_Transmit(&huart6, (uint8_t *)line_bisy, sizeof(line_bisy) - 1, HAL_MAX_DELAY);
+          HAL_UART_Transmit(&huart6, (uint8_t *)line_busy, sizeof(line_busy) - 1, HAL_MAX_DELAY);
         }
         else if (status == HAL_ERROR)
         {
-          static const char adc_error[] = "ADC error\r\n";
           HAL_UART_Transmit(&huart6, (uint8_t *)adc_error, sizeof(adc_error) - 1, HAL_MAX_DELAY);
         }
         prev_measurement = now;
       }
     }
 
-    if (adc_flag)
+    if (adc_flag && adc_mode == ADC_JOB_SINGLE)
     {
+      char buf[16];
+      int len = sprintf(buf, "ADC: %lu\r\n", adc_single_value);
+      HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+      adc_flag = 0;
+      adc_mode = ADC_JOB_NONE;
+    }
+
+    if (adc_flag && adc_mode == ADC_JOB_AVG)
+    {
+      uint32_t adc_dma_value = 0;
+      uint32_t sum = 0;
+      static const size_t adc_dma_buffer_length = sizeof(adc_dma_buffer) / sizeof(adc_dma_buffer[0]);
+      for (size_t i = 0; i < adc_dma_buffer_length; i++)
+      {
+        sum += adc_dma_buffer[i];
+      }
+      adc_dma_value = sum / adc_dma_buffer_length;
       char buf[16];
       int len = sprintf(buf, "ADC: %lu\r\n", adc_dma_value);
       HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
       adc_flag = 0;
+      adc_mode = ADC_JOB_NONE;
     }
 
     if (pending_presses > 0U)
