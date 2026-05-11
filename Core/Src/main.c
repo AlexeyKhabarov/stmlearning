@@ -48,11 +48,12 @@ typedef enum
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart6;
-
+HAL_StatusTypeDef status;
 /* USER CODE BEGIN PV */
 static uint32_t button_last_tick = 0;
 static uint32_t last_blink = 0;
@@ -72,15 +73,18 @@ static const char led_off[] = "LED OFF\r\n";
 static const char led_blink_slow[] = "LED BLINK SLOW\r\n";
 static const char led_blink_fast[] = "LED BLINK FAST\r\n";
 volatile uint8_t tim_flag = 0;
-static int32_t measured_adc1_ch10_code = 0;
+volatile int32_t measured_adc1_ch10_code = 0;
 static int16_t time_between_measurements = 0;
 static int8_t continue_measuring = 0;
 static uint32_t prev_measurement = 0;
+static uint32_t adc_dma_value = 0;
+volatile uint8_t adc_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART6_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
@@ -154,20 +158,19 @@ void execute_command(const char *str)
   {
     if (strlen(str) == 11)
     {
-      HAL_ADC_Start(&hadc1);
-      if (HAL_ADC_PollForConversion(&hadc1, 100U) == HAL_OK)
+      status = HAL_ADC_Start_DMA(&hadc1, &adc_dma_value, 1);
+      if (status == HAL_BUSY)
       {
-        measured_adc1_ch10_code = HAL_ADC_GetValue(&hadc1);
-        char buf[16];
-        int len = sprintf(buf, "ADC: %lu\r\n", measured_adc1_ch10_code);
-        HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+        static const char line_bisy[] = "ADC busy\r\n";
+        HAL_UART_Transmit(&huart6, (uint8_t *)line_bisy, sizeof(line_bisy) - 1, HAL_MAX_DELAY);
       }
-      else
+      else if (status == HAL_ERROR)
       {
-        const char str[] = "ADC timeout";
-        HAL_UART_Transmit(&huart6, (uint8_t *)str, sizeof(str) - 1, HAL_MAX_DELAY);
+        static const char adc_error[] = "ADC error\r\n";
+        HAL_UART_Transmit(&huart6, (uint8_t *)adc_error, sizeof(adc_error) - 1, HAL_MAX_DELAY);
       }
     }
+
     else if (str[11] == ' ')
     {
       parsing_measurement_command(str);
@@ -205,6 +208,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART6_UART_Init();
   MX_TIM2_Init();
   MX_ADC1_Init();
@@ -243,16 +247,27 @@ int main(void)
     {
       if ((now - prev_measurement) >= time_between_measurements)
       {
-        HAL_ADC_Start(&hadc1);
-        if (HAL_ADC_PollForConversion(&hadc1, 100U) == HAL_OK)
+        status = HAL_ADC_Start_DMA(&hadc1, &adc_dma_value, 1);
+        if (status == HAL_BUSY)
         {
-          measured_adc1_ch10_code = HAL_ADC_GetValue(&hadc1);
-          char buf[16];
-          int len = sprintf(buf, "ADC: %lu\r\n", measured_adc1_ch10_code);
-          HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+          static const char line_bisy[] = "ADC busy\r\n";
+          HAL_UART_Transmit(&huart6, (uint8_t *)line_bisy, sizeof(line_bisy) - 1, HAL_MAX_DELAY);
+        }
+        else if (status == HAL_ERROR)
+        {
+          static const char adc_error[] = "ADC error\r\n";
+          HAL_UART_Transmit(&huart6, (uint8_t *)adc_error, sizeof(adc_error) - 1, HAL_MAX_DELAY);
         }
         prev_measurement = now;
       }
+    }
+
+    if (adc_flag)
+    {
+      char buf[16];
+      int len = sprintf(buf, "ADC: %lu\r\n", adc_dma_value);
+      HAL_UART_Transmit(&huart6, (uint8_t *)buf, len, HAL_MAX_DELAY);
+      adc_flag = 0;
     }
 
     if (pending_presses > 0U)
@@ -467,6 +482,21 @@ static void MX_USART6_UART_Init(void)
 }
 
 /**
+ * Enable DMA controller clock
+ */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+}
+
+/**
  * @brief GPIO Initialization Function
  * @param None
  * @retval None
@@ -552,6 +582,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim->Instance == TIM2)
   {
     tim_flag = 1;
+  }
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance == ADC1)
+  {
+    adc_flag = 1;
   }
 }
 /* USER CODE END 4 */
